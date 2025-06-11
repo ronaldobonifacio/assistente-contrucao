@@ -1,0 +1,15 @@
+2025/06/11-00:53:16.665 3850 Reusing MANIFEST C:\Users\ronet\Documents\dreamAssists\.wwebjs_auth\session-dremassist\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/06/11-00:53:16.665 3850 Recovering log #97
+2025/06/11-00:53:16.674 3850 Reusing old log C:\Users\ronet\Documents\dreamAssists\.wwebjs_auth\session-dremassist\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000097.log 
+2025/06/11-00:53:18.135 56a8 Manual compaction at level-0 from '\x00(\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00)\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/06/11-00:56:28.356 5410 Level-0 table #103: started
+2025/06/11-00:56:28.387 5410 Level-0 table #103: 1280310 bytes OK
+2025/06/11-00:56:28.390 5410 Delete type=0 #97
+2025/06/11-00:56:30.015 539c Compacting 1@1 + 2@2 files
+2025/06/11-00:56:30.102 539c Generated table #104@1: 49396 keys, 2216017 bytes
+2025/06/11-00:56:30.139 539c Generated table #105@1: 23745 keys, 583188 bytes
+2025/06/11-00:56:30.140 539c Compacted 1@1 + 2@2 files => 2799205 bytes
+2025/06/11-00:56:30.142 539c compacted to: files[ 0 0 2 0 0 0 0 ]
+2025/06/11-00:56:30.142 539c Delete type=2 #99
+2025/06/11-00:56:30.142 539c Delete type=2 #100
+2025/06/11-00:56:30.142 539c Delete type=2 #103

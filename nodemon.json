@@ -1,0 +1,5 @@
+{
+  "ignore": [
+    ".wwebjs_auth/*"
+  ]
+}
