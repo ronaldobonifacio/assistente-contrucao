@@ -1,20 +1,14 @@
-const { db, admin } = require('../config/firebase');
-const { uploadLocalFileToCloudinary } = require('./cloudinaryService');
+// ARQUIVO COMPLETO E CORRIGIDO: firebaseService.js
+
+const { db } = require('../config/firebase');
+const { uploadMediaToCloudinary } = require('./cloudinaryService'); // Assumindo que essa função lida com o objeto de mídia
 const { log } = require('../utils/logger');
-const fs = require('fs');
+const { MessageMedia } = require('whatsapp-web.js'); // Necessário para fromFilePath
 const { FieldValue } = require('firebase-admin/firestore');
+const fs = require('fs');
 
 const GRUPO_ID = process.env.FIREBASE_GRUPO_ID || 'grupo1';
 
-/**
- * Salva uma nova compra confirmada no Firestore.
- * AGORA INCLUI o nome do usuário e o ID do grupo.
- * @param {string} phone O número do telefone do usuário.
- * @param {object} compraData Objeto com os detalhes da compra.
- * @param {string} userName O nome do usuário para registro.
- * @param {string} grupoId O ID do grupo ao qual a compra pertence.
- * @returns {Promise<boolean>} Retorna true se a compra foi salva com sucesso.
- */
 async function salvarCompraFirebase(phone, compraData, userName, grupoId) {
     const userId = phone.replace('@c.us', '');
     const timestamp = new Date();
@@ -24,6 +18,7 @@ async function salvarCompraFirebase(phone, compraData, userName, grupoId) {
         const anexosUrls = [];
         if (compraData.anexos && compraData.anexos.length > 0) {
             for (const localPath of compraData.anexos) {
+                // A conversão para MessageMedia deve ocorrer aqui, pois o serviço recebe o caminho
                 const media = MessageMedia.fromFilePath(localPath);
                 const url = await uploadMediaToCloudinary(media, phone);
                 if (url) anexosUrls.push(url);
@@ -34,11 +29,11 @@ async function salvarCompraFirebase(phone, compraData, userName, grupoId) {
             ...compraData,
             anexos: anexosUrls,
             userId: userId,
-            userName: userName, // <-- NOVO CAMPO
-            grupoId: grupoId,   // <-- NOVO CAMPO
+            userName: userName,
+            grupoId: grupoId,
             timestamp: timestamp.toISOString()
         };
-        delete dadosFinais.descricao; // Remove o campo de descrição bruta
+        delete dadosFinais.descricao;
 
         await db.collection('grupos').doc(grupoId)
                 .collection('compras').doc(userId)
@@ -54,79 +49,57 @@ async function salvarCompraFirebase(phone, compraData, userName, grupoId) {
     }
 }
 
-
-async function adicionarAnexoCompraExistente(phone, compraId, anexoUrl) {
+// CORREÇÃO: Padronizado para usar FieldValue importado e receber userId
+async function adicionarAnexoCompraExistente(userId, compraId, anexoUrl) {
     try {
-        const telefoneNormalizado = phone.replace('@c.us', '');
-        const compraRef = db.collection('grupos').doc(GRUPO_ID).collection('compras').doc(telefoneNormalizado).collection('comprasConfirmadas').doc(compraId);
-        await compraRef.update({ anexos: admin.firestore.FieldValue.arrayUnion(anexoUrl) });
-        log('FIREBASE-UPDATE', `Anexo adicionado à compra ${compraId}`, phone);
+        const compraRef = db.collection('grupos').doc(GRUPO_ID).collection('compras').doc(userId).collection('comprasConfirmadas').doc(compraId);
+        await compraRef.update({ anexos: FieldValue.arrayUnion(anexoUrl) });
+        log('FIREBASE-UPDATE', `Anexo adicionado à compra ${compraId}`, userId);
         return true;
     } catch (error) {
-        log('FIREBASE-UPDATE-FAIL', `Erro ao adicionar anexo: ${error.message}`, phone);
+        log('FIREBASE-UPDATE-FAIL', `Erro ao adicionar anexo: ${error.message}`, userId);
         return false;
     }
 }
 
-/**
- * Edita uma compra existente no Firestore.
- * @param {string} phone O número do telefone do usuário.
- * @param {string} compraId O ID do documento da compra a ser editado.
- * @param {object} novosDados Objeto com os campos e valores a serem atualizados.
- * @returns {Promise<boolean>} Retorna true se a edição foi bem-sucedida, false caso contrário.
- */
-async function editarCompraFirebase(phone, compraId, novosDados) {
-    const userId = phone.replace('@c.us', '');
+// CORREÇÃO: Alterado para receber userId em vez de phone, para alinhar com a chamada
+async function editarCompraFirebase(userId, compraId, novosDados) {
     try {
-        log('FIREBASE_EDIT', `Iniciando edição da compra ${compraId} para o usuário ${userId}`, phone);
-
-        // Adiciona um timestamp de atualização para rastreamento
+        log('FIREBASE_EDIT', `Iniciando edição da compra ${compraId} para o usuário ${userId}`, userId);
         const dadosParaAtualizar = {
             ...novosDados,
             lastUpdated: new Date().toISOString()
         };
-
         const compraRef = db.collection('grupos').doc(GRUPO_ID)
                               .collection('compras').doc(userId)
                               .collection('comprasConfirmadas').doc(compraId);
-
         await compraRef.update(dadosParaAtualizar);
-
-        log('FIREBASE_EDIT_SUCCESS', `Compra ${compraId} atualizada com sucesso.`, phone);
+        log('FIREBASE_EDIT_SUCCESS', `Compra ${compraId} atualizada com sucesso.`, userId);
         return true;
     } catch (error) {
-        log('FIREBASE_EDIT_ERROR', `Erro ao editar compra ${compraId}: ${error.message}`, phone);
+        log('FIREBASE_EDIT_ERROR', `Erro ao editar compra ${compraId}: ${error.message}`, userId);
         console.error("Erro ao editar compra no Firebase: ", error);
         return false;
     }
 }
 
-/**
- * Remove um URL de anexo específico de uma compra no Firestore.
- * @param {string} phone O número do telefone do usuário.
- * @param {string} compraId O ID do documento da compra.
- * @param {string} anexoUrl O URL do anexo a ser removido.
- * @returns {Promise<boolean>} Retorna true se a remoção foi bem-sucedida.
- */
-async function removerAnexoCompra(phone, compraId, anexoUrl) {
-    const userId = phone.replace('@c.us', '');
+// CORREÇÃO: Alterado para receber userId em vez de phone, para alinhar com a chamada
+async function removerAnexoCompra(userId, compraId, anexoUrl) {
     const compraRef = db.collection('grupos').doc(GRUPO_ID)
                           .collection('compras').doc(userId)
                           .collection('comprasConfirmadas').doc(compraId);
-
     try {
-        log('FIREBASE_DELETE_ATTACHMENT', `Removendo anexo ${anexoUrl} da compra ${compraId}`, phone);
+        log('FIREBASE_DELETE_ATTACHMENT', `Removendo anexo ${anexoUrl} da compra ${compraId}`, userId);
         await compraRef.update({
             anexos: FieldValue.arrayRemove(anexoUrl)
         });
-        log('FIREBASE_DELETE_ATTACHMENT_SUCCESS', `Anexo removido da compra ${compraId}`, phone);
-        // Adicionar lógica para deletar o arquivo do Cloudinary se necessário (mais avançado)
+        log('FIREBASE_DELETE_ATTACHMENT_SUCCESS', `Anexo removido da compra ${compraId}`, userId);
         return true;
     } catch (error) {
-        log('FIREBASE_DELETE_ATTACHMENT_ERROR', `Erro ao remover anexo da compra ${compraId}: ${error.message}`, phone);
+        log('FIREBASE_DELETE_ATTACHMENT_ERROR', `Erro ao remover anexo da compra ${compraId}: ${error.message}`, userId);
         console.error("Erro ao remover anexo no Firebase: ", error);
         return false;
     }
 }
 
-module.exports = { salvarCompraFirebase, adicionarAnexoCompraExistente,editarCompraFirebase,removerAnexoCompra  };
+module.exports = { salvarCompraFirebase, adicionarAnexoCompraExistente, editarCompraFirebase, removerAnexoCompra };

@@ -4,31 +4,29 @@ const { db } = require('../config/firebase');
 const { salvarCompraFirebase, adicionarAnexoCompraExistente, editarCompraFirebase, removerAnexoCompra } = require('../services/firebaseService');
 const { transcreverAudioComGemini, extractPurchaseDetails, getConversationalResponse } = require('../services/geminiService');
 const { uploadMediaToCloudinary } = require('../services/cloudinaryService');
-const { salvarAnexoLocalmente, exportarComprasParaPlanilha } = require('../services/fileService');
+const { exportarComprasParaPlanilha, salvarAnexoLocalmente } = require('../services/fileService');
 const { log } = require('../utils/logger');
 const { delay } = require('../utils/helpers');
+const { MessageMedia } = require('whatsapp-web.js');
 const fs = require('fs');
 
-// Gerenciamento de estado e sessão em memória
 const userStates = {};
 const userPurchaseData = {};
 const userSessionData = {};
 
 const GRUPO_ID = process.env.FIREBASE_GRUPO_ID || 'grupo1';
-const PAGE_SIZE = 5; // Número de compras por página
+const PAGE_SIZE = 5;
 
-// Função auxiliar para enviar o menu principal e evitar repetição de código
 async function sendMainMenu(msg, name) {
     const menuText = `👷‍♂️ Olá *${name.split(" ")[0]}*! Sou seu assistente de compras para a obra.\n\n` +
         '*Como posso te ajudar hoje?*\n\n' +
-        '1️⃣ - Listar minhas compras\n' +
+        '1️⃣ - Listar compras do grupo\n' +
         '2️⃣ - Adicionar nova compra\n' +
         '3️⃣ - Exportar para planilha\n\n' +
-        'Digite o *número* da opção desejada ou me faça uma pergunta como "quanto gastei com cimento?".';
+        'Para ver apenas as suas compras, digite *"listar minhas"*.';
     await msg.reply(menuText);
 }
 
-// Função auxiliar para formatar os detalhes de uma compra para exibição
 function formatPurchaseDetails(compra, title) {
     let detailsText = `${title}\n\n` +
         `🏗️ *Material:* ${compra.material || 'N/A'}\n` +
@@ -40,7 +38,6 @@ function formatPurchaseDetails(compra, title) {
     return detailsText;
 }
 
-// NOVA FUNÇÃO: Formata a comparação entre a compra antiga e a nova, destacando as mudanças
 function formatPurchaseComparison(original, final, title) {
     let comparisonText = `${title}\n\n`;
     const fields = ['material', 'quantidade', 'valor_unitario', 'valor_total', 'data', 'local'];
@@ -52,20 +49,16 @@ function formatPurchaseComparison(original, final, title) {
         data: '📅 *Data:*',
         local: '🏪 *Local:*'
     };
-
     fields.forEach(field => {
         const originalValue = original[field];
         const finalValue = final[field];
-        
         if (originalValue !== finalValue && finalValue) {
             let originalDisplay = originalValue || 'N/A';
             let finalValueDisplay = finalValue;
-
             if (field === 'valor_unitario' || field === 'valor_total') {
                 originalDisplay = `R$ ${originalValue?.toFixed(2) || '0.00'}`;
                 finalValueDisplay = `R$ ${finalValue?.toFixed(2)}`;
             }
-            
             comparisonText += `${fieldLabels[field]} ~${originalDisplay}~  ➡️  *${finalValueDisplay}*\n`;
         } else if (finalValue) {
             let displayValue = finalValue;
@@ -75,29 +68,21 @@ function formatPurchaseComparison(original, final, title) {
             comparisonText += `${fieldLabels[field]} ${displayValue}\n`;
         }
     });
-
     if (final.anexos && final.anexos.length > 0) {
         comparisonText += `\n📎 *Anexos:* ${final.anexos.length} arquivo(s).\n`;
     }
-
     return comparisonText;
 }
 
-// NOVO HANDLER: Lida com perguntas financeiras específicas
 async function handleFinancialQuery(phone, msgBody) {
     const match = msgBody.match(/quanto gastei com|total de/i);
     if (!match) return null;
-
     const material = msgBody.substring(match.index + match[0].length).trim().replace('?', '');
     if (!material) return null;
-
     let totalGasto = 0;
-    const snapshot = await db.collection('grupos').doc(GRUPO_ID).collection('compras').doc(phone.replace('@c.us', '')).collection('comprasConfirmadas').get();
+    const snapshot = await db.collectionGroup('comprasConfirmadas').where('grupoId', '==', GRUPO_ID).get();
+    if (snapshot.empty) return `Não encontrei nenhum gasto registrado para *${material}* no grupo.`;
     
-    if (snapshot.empty) {
-        return `Não encontrei nenhum gasto registrado para *${material}*.`;
-    }
-
     snapshot.docs.forEach(doc => {
         const compra = doc.data();
         if (compra.material && compra.material.toLowerCase().includes(material.toLowerCase())) {
@@ -105,13 +90,9 @@ async function handleFinancialQuery(phone, msgBody) {
         }
     });
 
-    if (totalGasto > 0) {
-        return `Até agora, você gastou um total de *R$ ${totalGasto.toFixed(2)}* com *${material}*.`;
-    } else {
-        return `Não encontrei nenhum gasto registrado para *${material}*.`;
-    }
+    if (totalGasto > 0) return `O gasto total do grupo com *${material}* foi de *R$ ${totalGasto.toFixed(2)}*.`;
+    else return `Não encontrei nenhum gasto registrado para *${material}* no grupo.`;
 }
-
 
 async function handleMessage(msg) {
     const phone = msg.from;
@@ -120,88 +101,88 @@ async function handleMessage(msg) {
     const name = contact.pushname || 'Sem nome';
     let msgBody = msg.body.trim();
 
-    const listPurchases = async (phone, msg, nextPage = false) => {
+    const listPurchases = async (scope = 'group', nextPage = false) => {
         await chat.sendStateTyping();
-        const userId = phone.replace('@c.us', '');
-        let query = db.collection('grupos').doc(GRUPO_ID).collection('compras').doc(userId).collection('comprasConfirmadas');
-
-        const searchTerm = userSessionData[phone]?.searchTerm;
+        let query;
+        const sessionKey = `${scope}Session`;
         
-        query = query.orderBy('timestamp', 'desc');
-
-        const snapshot = await query.get();
-
-        let allDocs = snapshot.docs;
-        if(searchTerm) {
-            allDocs = snapshot.docs.filter(doc => doc.data().material?.toLowerCase().includes(searchTerm.toLowerCase()));
+        if (!userSessionData[phone]) userSessionData[phone] = {};
+        if (!userSessionData[phone][sessionKey] || !nextPage) {
+            userSessionData[phone][sessionKey] = { page: 1, compras: [], lastVisible: null };
         }
-        
-        const page = userSessionData[phone]?.page || 1;
-        const startIndex = (page - 1) * PAGE_SIZE;
-        const paginatedDocs = allDocs.slice(startIndex, startIndex + PAGE_SIZE);
+        userSessionData[phone].activeListScope = scope;
+        const session = userSessionData[phone][sessionKey];
 
-        if (paginatedDocs.length === 0 && page === 1) {
-            let reply = 'Você ainda não possui compras registradas.';
-            if (searchTerm) reply = `Nenhuma compra encontrada para o termo "*${searchTerm}*".`;
+        if (scope === 'user') {
+            const userId = phone.replace('@c.us', '');
+            query = db.collection('grupos').doc(GRUPO_ID).collection('compras').doc(userId).collection('comprasConfirmadas').orderBy('timestamp', 'desc');
+        } else {
+            query = db.collectionGroup('comprasConfirmadas').where('grupoId', '==', GRUPO_ID).orderBy('timestamp', 'desc');
+        }
+
+        if (nextPage && session.lastVisible) {
+            query = query.startAfter(session.lastVisible);
+        }
+
+        const snapshot = await query.limit(PAGE_SIZE).get();
+
+        if (snapshot.empty && session.page === 1) {
+            let reply = scope === 'user' ? 'Você ainda não possui compras registradas.' : 'Nenhuma compra registrada no grupo ainda.';
             await msg.reply(reply);
             cleanup(phone);
             return;
         }
-        if (paginatedDocs.length === 0 && page > 1) {
-            await msg.reply('Não há mais compras para mostrar.');
-            await delay(500);
-            await msg.reply(
-                'O que você deseja fazer?\n\n' +
-                '*A* - Ver anexos de uma compra\n' +
-                '*B* - Anexar novo documento\n' +
-                '*C* - Editar uma compra\n' +
-                '*D* - Remover anexo de uma compra\n\n' +
-                '_(Responda com a letra ou digite "cancelar")_'
-            );
-            userStates[phone] = 'awaiting_list_action';
-            return;
-        }
         
-        const compras = paginatedDocs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-        if (page === 1) {
-            userSessionData[phone].compras = compras;
+        const novasCompras = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        if (snapshot.empty && session.page > 1) {
+            await msg.reply('Não há mais compras para mostrar.');
         } else {
-            userSessionData[phone].compras.push(...compras);
+            if (session.page === 1) {
+                session.compras = novasCompras;
+            } else {
+                session.compras.push(...novasCompras);
+            }
+            session.lastVisible = snapshot.docs[snapshot.docs.length - 1];
+
+            let title = scope === 'user' ? '🧾 *Suas compras registradas:*' : '🧾 *Compras de todo o grupo:*';
+            let resposta = session.page === 1 ? `${title}\n\n` : '';
+
+            novasCompras.forEach((compra) => {
+                const index = session.compras.findIndex(c => c.id === compra.id);
+                resposta += `*${index + 1}.* -----\n` +
+                    `  *Material:* ${compra.material || 'N/A'}\n` +
+                    (compra.data ? `  *Data:* ${compra.data}\n` : '') +
+                    (compra.valor_total ? `  *V. Total:* R$ ${compra.valor_total.toFixed(2)}\n` : '') +
+                    // ALTERAÇÃO: Contagem de anexos adicionada aqui
+                    `  *Anexos:* ${compra.anexos ? compra.anexos.length : 0}\n`;
+                if (scope === 'group') {
+                    resposta += `  *Comprador:* ${compra.userName || 'Anônimo'}\n`;
+                }
+                resposta += `\n`;
+            });
+            await msg.reply(resposta);
         }
-        userSessionData[phone].page = page;
 
-        let resposta = page === 1 ? `🧾 *Suas compras registradas${searchTerm ? ` para "${searchTerm}"` : ''}:*\n\n` : '';
+        let finalMessage = '';
+        const hasMore = novasCompras.length === PAGE_SIZE;
 
-        compras.forEach((compra) => {
-            const index = userSessionData[phone].compras.findIndex(c => c.id === compra.id);
-            resposta += `*${index + 1}.* -----\n` +
-                `  *Material:* ${compra.material || 'N/A'}\n` +
-                (compra.data ? `  *Data:* ${compra.data}\n` : '') +
-                (compra.valor_total ? `  *V. Total:* R$ ${compra.valor_total.toFixed(2)}\n` : '') +
-                `  *Anexos:* ${compra.anexos ? compra.anexos.length : 0}\n\n`;
-        });
-
-        await msg.reply(resposta);
-
-        if (startIndex + paginatedDocs.length >= allDocs.length) {
-            await delay(500);
-            await msg.reply(
-                'O que você deseja fazer?\n\n' +
-                '*A* - Ver anexos de uma compra\n' +
-                '*B* - Anexar novo documento\n' +
-                '*C* - Editar uma compra\n' +
-                '*D* - Remover anexo de uma compra\n\n' +
-                '_(Responda com a letra ou digite "cancelar")_'
-            );
-            userStates[phone] = 'awaiting_list_action';
-        } else {
-            userSessionData[phone].page++;
-            await msg.reply(`Mostrando página ${page}. Digite *"mais"* para ver as próximas.`);
-            userStates[phone] = 'awaiting_more_purchases';
+        if (hasMore) {
+            session.page++;
+            finalMessage += `Mostrando página ${session.page - 1}. Digite *"mais"* para ver as próximas.\n\n`;
         }
-    }
 
+        finalMessage += 'O que você deseja fazer?\n\n' +
+            '*A* - Ver anexos de uma compra\n' +
+            '*B* - Anexar novo documento\n' +
+            '*C* - Editar uma compra\n' +
+            '*D* - Remover anexo de uma compra\n\n' +
+            '_(Responda com a letra ou digite "cancelar")_';
+
+        await msg.reply(finalMessage);
+        userStates[phone] = 'awaiting_list_action';
+        userSessionData[phone][sessionKey] = session;
+    };
 
     if (!phone.endsWith('@c.us') || chat.isGroup) return;
 
@@ -242,33 +223,20 @@ async function handleMessage(msg) {
         return;
     }
 
-    if (userStates[phone] === 'awaiting_more_purchases') {
-        if (msgBody.toLowerCase() === 'mais') {
-             await listPurchases(phone, msg, true);
-        } else {
-            await msg.reply('Comando inválido. Digite "mais" para ver o restante ou "cancelar" para voltar ao menu.');
-        }
-        return;
-    }
-
     if (userStates[phone] === 'awaiting_purchase_correction') {
         const textoCorrecao = msg.body.trim();
         if (!textoCorrecao) {
             await msg.reply('Por favor, descreva a correção.');
             return;
         }
-
         const correcoes = await extractPurchaseDetails(textoCorrecao, phone);
         const compraOriginal = userPurchaseData[phone];
-
         const dadosParaAtualizar = Object.keys(correcoes).reduce((acc, key) => {
             if (correcoes[key]) acc[key] = correcoes[key];
             return acc;
         }, {});
-
         const dadosFinais = { ...compraOriginal, ...dadosParaAtualizar };
         userPurchaseData[phone] = dadosFinais;
-
         userStates[phone] = 'awaiting_confirmation';
         const confirmationText = formatPurchaseComparison(compraOriginal, dadosFinais, '🔍 *CONFIRA OS DADOS CORRIGIDOS:*') +
                                  `\nAgora os dados estão *corretos*? (*sim* / *não*)`;
@@ -277,18 +245,20 @@ async function handleMessage(msg) {
     }
 
     if (userStates[phone] === 'awaiting_attachment_to_delete') {
-        const compra = userSessionData[phone].compraParaInteragir;
+        const scope = userSessionData[phone]?.activeListScope || 'group';
+        const sessionKey = `${scope}Session`;
+        const compra = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
+        if(!compra) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
+
         const index = parseInt(msgBody, 10) - 1;
 
         if (isNaN(index) || index < 0 || index >= compra.anexos.length) {
             await msg.reply('❌ Número inválido. Por favor, digite um número da lista de anexos.');
             return;
         }
-
         const anexoParaRemover = compra.anexos[index];
         await msg.reply(`Removendo o anexo...`);
-
-        const sucesso = await removerAnexoCompra(phone, compra.id, anexoParaRemover);
+        const sucesso = await removerAnexoCompra(compra.userId, compra.id, anexoParaRemover);
         if (sucesso) {
             await msg.reply('✅ Anexo removido com sucesso!');
         } else {
@@ -303,8 +273,13 @@ async function handleMessage(msg) {
             const media = await msg.downloadMedia();
             const anexoUrl = await uploadMediaToCloudinary(media, phone);
             if (anexoUrl) {
-                await adicionarAnexoCompraExistente(phone, userSessionData[phone].compraId, anexoUrl);
-                await msg.reply('✅ Anexo salvo com sucesso! Deseja adicionar mais algum arquivo a esta compra? (responda *sim* ou *não*)');
+                const scope = userSessionData[phone]?.activeListScope || 'group';
+                const sessionKey = `${scope}Session`;
+                const compra = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
+                if(!compra) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
+
+                await adicionarAnexoCompraExistente(compra.userId, compra.id, anexoUrl);
+                await msg.reply('✅ Anexo salvo com sucesso! Deseja adicionar mais algum arquivo? (responda *sim* ou *não*)');
             } else {
                 await msg.reply('❌ Falha ao salvar o anexo. Deseja tentar novamente?');
             }
@@ -320,13 +295,17 @@ async function handleMessage(msg) {
     }
 
     if (userStates[phone] === 'awaiting_purchase_number') {
+        const scope = userSessionData[phone]?.activeListScope || 'group';
+        const sessionKey = `${scope}Session`;
+        const compras = userSessionData[phone]?.[sessionKey]?.compras || [];
         const index = parseInt(msgBody, 10) - 1;
-        const compras = userSessionData[phone].compras;
+        
         if (isNaN(index) || index < 0 || index >= compras.length) {
             await msg.reply('❌ Número inválido. Por favor, digite um número da lista.');
             return;
         }
         const compraSelecionada = compras[index];
+        userSessionData[phone][sessionKey].compraParaInteragir = compraSelecionada;
         const action = userSessionData[phone].action;
 
         if (action === 'view_attachments') {
@@ -342,18 +321,30 @@ async function handleMessage(msg) {
             }
             cleanup(phone);
         } else if (action === 'add_attachments') {
-            userSessionData[phone].compraId = compraSelecionada.id;
+            if (compraSelecionada.userId !== phone.replace('@c.us','')) {
+                await msg.reply('❌ Você só pode adicionar anexos às compras que você mesmo registrou.');
+                cleanup(phone);
+                return;
+            }
             userStates[phone] = 'awaiting_attachment_to_existing';
-            await msg.reply(`Ok. Por favor, envie o primeiro anexo para a compra de *${compraSelecionada.material}*.\n\nQuando terminar de enviar os arquivos, digite "não".`);
+            await msg.reply(`Ok. Por favor, envie o primeiro anexo para a compra de *${compraSelecionada.material}*.`);
         } else if (action === 'edit_purchase') {
-            userSessionData[phone].compraParaEditar = compraSelecionada;
+            if (compraSelecionada.userId !== phone.replace('@c.us','')) {
+                await msg.reply('❌ Você só pode editar as compras que você mesmo registrou.');
+                cleanup(phone);
+                return;
+            }
             userStates[phone] = 'awaiting_purchase_edit_description';
             const originalDetails = formatPurchaseDetails(compraSelecionada, '📝 *ESTES SÃO OS DADOS ATUAIS DA COMPRA:*');
             await msg.reply(originalDetails);
             await delay(1000);
-            await msg.reply('Por favor, envie uma mensagem de texto ou um áudio descrevendo *como a compra deve ficar* (ex: "o material é 10 sacos de cimento, valor total 250 reais, comprado na Leroy").');
+            await msg.reply('Por favor, envie uma mensagem de texto ou um áudio descrevendo *como a compra deve ficar*.');
         } else if (action === 'delete_attachment') {
-            userSessionData[phone].compraParaInteragir = compraSelecionada;
+            if (compraSelecionada.userId !== phone.replace('@c.us','')) {
+                await msg.reply('❌ Você só pode remover anexos das compras que você mesmo registrou.');
+                cleanup(phone);
+                return;
+            }
             const anexos = compraSelecionada.anexos || [];
             if (anexos.length === 0) {
                 await msg.reply('Esta compra não possui anexos para remover.');
@@ -379,38 +370,29 @@ async function handleMessage(msg) {
         } else {
             textoEdicao = msg.body.trim();
         }
-
         if (!textoEdicao) {
-            await msg.reply('❌ Não consegui entender a descrição. Por favor, envie um texto ou áudio com os novos dados da compra.');
+            await msg.reply('❌ Não consegui entender a descrição.');
             return;
         }
-        
         await msg.reply('Analisando as alterações...');
         const novosDadosParciais = await extractPurchaseDetails(textoEdicao, phone);
-        const compraOriginal = userSessionData[phone].compraParaEditar;
+        const scope = userSessionData[phone]?.activeListScope || 'group';
+        const sessionKey = `${scope}Session`;
+        const compraOriginal = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
+        if(!compraOriginal) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
 
         const dadosParaAtualizar = Object.keys(novosDadosParciais).reduce((acc, key) => {
-            if (novosDadosParciais[key]) { 
-                acc[key] = novosDadosParciais[key];
-            }
+            if (novosDadosParciais[key]) acc[key] = novosDadosParciais[key];
             return acc;
         }, {});
-        
         if (Object.keys(dadosParaAtualizar).length === 0) {
-            await msg.reply('❌ Desculpe, não consegui identificar nenhuma informação para alterar na sua mensagem. Por favor, tente novamente (ex: "alterar o valor total para 50 reais").');
+            await msg.reply('❌ Não identifiquei nenhuma informação para alterar. Tente novamente.');
             return;
         }
-
-        const dadosFinais = {
-            ...compraOriginal,
-            ...dadosParaAtualizar,
-        };
-
-        userSessionData[phone].dadosEditados = dadosFinais;
-
+        const dadosFinais = { ...compraOriginal, ...dadosParaAtualizar };
+        userSessionData[phone][sessionKey].dadosEditados = dadosFinais;
         const previewText = formatPurchaseComparison(compraOriginal, dadosFinais, '*PREVIEW DA EDIÇÃO*') +
-            '\nAs alterações estão *corretas*? Responda com *sim* para confirmar e salvar.';
-            
+            '\nAs alterações estão *corretas*? Responda com *sim* para confirmar.';
         await msg.reply(previewText);
         userStates[phone] = 'awaiting_edit_confirmation';
         return;
@@ -419,18 +401,19 @@ async function handleMessage(msg) {
     if (userStates[phone] === 'awaiting_edit_confirmation') {
         if (msgBody.toLowerCase() === 'sim' || msgBody.toLowerCase() === 's') {
             await msg.reply('✅ Confirmado! Salvando as alterações...');
-            const compraId = userSessionData[phone].compraParaEditar.id;
-            const novosDados = userSessionData[phone].dadosEditados;
-            
+            const scope = userSessionData[phone]?.activeListScope || 'group';
+            const sessionKey = `${scope}Session`;
+            const compraParaInteragir = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
+            if(!compraParaInteragir) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
+
+            const compraId = compraParaInteragir.id;
+            const userId = compraParaInteragir.userId;
+            const novosDados = userSessionData[phone][sessionKey].dadosEditados;
             delete novosDados.id;
 
-            const sucesso = await editarCompraFirebase(phone, compraId, novosDados);
-
-            if (sucesso) {
-                await msg.reply('✨ *Compra atualizada com sucesso no sistema!*');
-            } else {
-                await msg.reply('❌ Falha ao atualizar a compra. Por favor, tente novamente mais tarde.');
-            }
+            const sucesso = await editarCompraFirebase(userId, compraId, novosDados);
+            if (sucesso) await msg.reply('✨ *Compra atualizada com sucesso no sistema!*');
+            else await msg.reply('❌ Falha ao atualizar a compra.');
         } else {
             await msg.reply('Ok, edição descartada.');
         }
@@ -440,24 +423,24 @@ async function handleMessage(msg) {
 
     if (userStates[phone] === 'awaiting_list_action') {
         const action = msgBody.toLowerCase();
-        if (action === 'a') {
-            userSessionData[phone].action = 'view_attachments';
+        if (action === 'mais') {
+            const scope = userSessionData[phone]?.activeListScope || 'group';
+            await listPurchases(scope, true);
+            return;
+        }
+        if (['a', 'b', 'c', 'd'].includes(action)) {
+            const actionsMap = { a: 'view_attachments', b: 'add_attachments', c: 'edit_purchase', d: 'delete_attachment' };
+            const messagesMap = {
+                a: 'Qual o *número* da compra cujos anexos você quer ver?',
+                b: 'Qual o *número* da compra para adicionar novos anexos?',
+                c: 'Qual o *número* da compra que você deseja *editar*?',
+                d: 'De qual *número* de compra você quer remover um anexo?'
+            };
+            userSessionData[phone].action = actionsMap[action];
             userStates[phone] = 'awaiting_purchase_number';
-            await msg.reply('Qual o *número* da compra cujos anexos você quer ver?');
-        } else if (action === 'b') {
-            userSessionData[phone].action = 'add_attachments';
-            userStates[phone] = 'awaiting_purchase_number';
-            await msg.reply('Qual o *número* da compra para adicionar novos anexos?');
-        } else if (action === 'c') {
-            userSessionData[phone].action = 'edit_purchase';
-            userStates[phone] = 'awaiting_purchase_number';
-            await msg.reply('Qual o *número* da compra que você deseja *editar*?');
-        } else if (action === 'd') {
-            userSessionData[phone].action = 'delete_attachment';
-            userStates[phone] = 'awaiting_purchase_number';
-            await msg.reply('De qual *número* de compra você quer remover um anexo?');
+            await msg.reply(messagesMap[action]);
         } else {
-            await msg.reply('Opção inválida. Responda com *A*, *B*, *C* ou *D*.');
+            await msg.reply('Opção inválida. Responda com a letra da opção, "mais" ou "cancelar".');
         }
         return;
     }
@@ -467,15 +450,22 @@ async function handleMessage(msg) {
             const media = await msg.downloadMedia();
             const localPath = await salvarAnexoLocalmente(media, phone);
             if (localPath) {
+                if(!userPurchaseData[phone]) userPurchaseData[phone] = {};
+                if(!userPurchaseData[phone].anexos) userPurchaseData[phone].anexos = [];
                 userPurchaseData[phone].anexos.push(localPath);
                 await msg.reply('✅ Anexo salvo temporariamente! Deseja adicionar mais algum? (*sim* / *não*)');
             } else {
-                await msg.reply('❌ Falha ao salvar o anexo. Deseja tentar novamente?');
+                await msg.reply('❌ Falha ao salvar o anexo. Tente novamente?');
             }
         } else if (msgBody.toLowerCase() === 'sim') {
             await msg.reply('Ok, aguardando o próximo anexo...');
         } else if (msgBody.toLowerCase() === 'não' || msgBody.toLowerCase() === 'nao') {
             const purchaseInfo = userPurchaseData[phone];
+            if (!purchaseInfo || !purchaseInfo.descricao) {
+                await msg.reply('❌ A descrição da compra está faltando. Vamos cancelar e tentar de novo.');
+                cleanup(phone);
+                return;
+            }
             const purchaseDetails = await extractPurchaseDetails(purchaseInfo.descricao, phone);
             if (!purchaseDetails || !purchaseDetails.material) {
                 await msg.reply('❌ Não consegui entender a descrição da compra. Vamos cancelar e tentar de novo.');
@@ -484,7 +474,6 @@ async function handleMessage(msg) {
             }
             userPurchaseData[phone] = { ...purchaseDetails, anexos: purchaseInfo.anexos || [] };
             userStates[phone] = 'awaiting_confirmation';
-            
             const finalData = userPurchaseData[phone];
             const confirmationText = formatPurchaseDetails(finalData, '🔍 *CONFIRA OS DADOS FINAIS:*') +
                                      `📎 *Anexos:* ${finalData.anexos.length} arquivo(s) pronto(s) para upload.\n\n` +
@@ -498,9 +487,9 @@ async function handleMessage(msg) {
 
     if (userStates[phone] === 'awaiting_confirmation') {
         if (msgBody.toLowerCase() === 'sim' || msgBody.toLowerCase() === 's') {
-            await msg.reply('✅ Confirmado! Salvando sua compra e fazendo upload dos anexos. Isso pode levar um momento...');
+            await msg.reply('✅ Confirmado! Salvando sua compra e fazendo upload dos anexos...');
             const compraData = userPurchaseData[phone];
-            const salvou = await salvarCompraFirebase(phone, compraData);
+            const salvou = await salvarCompraFirebase(phone, compraData, name, GRUPO_ID);
             await msg.reply(salvou ? '✨ *Compra registrada com sucesso no sistema!*' : '❌ Falha ao salvar a compra. Tente novamente.');
             cleanup(phone);
         } else if (msgBody.toLowerCase() === 'não' || msgBody.toLowerCase() === 'nao') {
@@ -535,7 +524,7 @@ async function handleMessage(msg) {
 
         if (!textoCompra) {
             if (localPath) {
-                await msg.reply('Anexo recebido. Por favor, envie agora uma *mensagem de texto* com a descrição da compra (material, valor, etc).');
+                await msg.reply('Anexo recebido. Envie agora a *descrição* da compra (material, valor, etc).');
                 userPurchaseData[phone] = { anexos: [localPath], descricao: '' };
                 userStates[phone] = 'awaiting_purchase_description';
             } else {
@@ -548,18 +537,22 @@ async function handleMessage(msg) {
             anexos: localPath ? [localPath] : []
         };
         userStates[phone] = 'awaiting_more_attachments';
-        await msg.reply(`Descrição entendida. ${localPath ? 'Anexo salvo temporariamente. ' : ''}Deseja adicionar mais algum anexo a esta compra? (responda *sim* ou *não*)`);
+        await msg.reply(`Descrição entendida. ${localPath ? 'Anexo salvo temporariamente. ' : ''}Deseja adicionar mais algum anexo? (*sim* / *não*)`);
         return;
     }
 
     const lowerCaseMsgBody = msgBody.toLowerCase();
-    const listRegex = /^1$|^listar(.*)/i;
     
+    if (lowerCaseMsgBody === 'listar minhas') {
+        cleanup(phone);
+        await listPurchases('user');
+        return;
+    }
+
+    const listRegex = /^1$|^listar$/i;
     if (listRegex.test(lowerCaseMsgBody)) {
-        const match = lowerCaseMsgBody.match(listRegex);
-        const searchTerm = match[1] ? match[1].trim() : null;
-        userSessionData[phone] = { searchTerm: searchTerm, page: 1 };
-        await listPurchases(phone, msg);
+        cleanup(phone);
+        await listPurchases('group');
         return;
     }
 
@@ -569,12 +562,12 @@ async function handleMessage(msg) {
             await msg.reply(
                 '🛒 *REGISTRO DE NOVA COMPRA*\n\n' +
                 'Para registrar, descreva sua compra por *texto* ou *áudio*.\n\n' +
-                'Para adicionar anexos, envie um arquivo (imagem, PDF, etc) e *descreva a compra na legenda*.'
+                'Para adicionar anexos, envie um arquivo e *descreva a compra na legenda*.'
             );
             break;
         case '3':
             await chat.sendStateTyping();
-            await exportarComprasParaPlanilha(phone, msg);
+            await exportarComprasParaPlanilha(msg);
             break;
         default:
              if (!userStates[phone]) {
@@ -583,19 +576,11 @@ async function handleMessage(msg) {
                     await msg.reply(financialResponse);
                     return;
                 }
-
                 log('FALLBACK', `Nenhum comando reconhecido. Iniciando modo de conversa livre para: ${phone}`);
                 userStates[phone] = 'free_chat';
-                
-                // =========================================================================================
-                // CORREÇÃO: Adicionando a inicialização do histórico de chat que estava faltando.
-                // =========================================================================================
                 userSessionData[phone] = { chatHistory: [] };
-
                 await chat.sendStateTyping();
                 const initialResponse = await getConversationalResponse([], msgBody);
-                
-                // Agora é seguro usar o userSessionData[phone]
                 userSessionData[phone].chatHistory.push({ role: 'user', parts: [{ text: msgBody }] });
                 userSessionData[phone].chatHistory.push({ role: 'model', parts: [{ text: initialResponse }] });
                 await msg.reply(initialResponse);
