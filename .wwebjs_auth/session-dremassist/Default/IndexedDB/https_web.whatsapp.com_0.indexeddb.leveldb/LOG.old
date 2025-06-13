@@ -1,17 +1,4 @@
-2025/06/13-00:44:59.753 7dc Reusing MANIFEST C:\Users\ronet\Documents\assistente-contrucao\.wwebjs_auth\session-dremassist\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
-2025/06/13-00:44:59.753 7dc Recovering log #219
-2025/06/13-00:44:59.768 7dc Reusing old log C:\Users\ronet\Documents\assistente-contrucao\.wwebjs_auth\session-dremassist\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000219.log 
-2025/06/13-00:45:01.209 34e8 Level-0 table #226: started
-2025/06/13-00:45:01.214 34e8 Level-0 table #226: 124506 bytes OK
-2025/06/13-00:45:01.216 34e8 Delete type=0 #219
-2025/06/13-00:45:01.216 34e8 Manual compaction at level-0 from '\x00?\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00@\x00\x00\x00' @ 0 : 0; will stop at (end)
-2025/06/13-00:45:02.382 4980 Compacting 1@1 + 3@2 files
-2025/06/13-00:45:02.449 4980 Generated table #227@1: 79653 keys, 2267860 bytes
-2025/06/13-00:45:02.488 4980 Generated table #228@1: 26064 keys, 2180628 bytes
-2025/06/13-00:45:02.523 4980 Generated table #229@1: 49186 keys, 1007618 bytes
-2025/06/13-00:45:02.523 4980 Compacted 1@1 + 3@2 files => 5456106 bytes
-2025/06/13-00:45:02.525 4980 compacted to: files[ 0 0 3 0 0 0 0 ]
-2025/06/13-00:45:02.525 4980 Delete type=2 #221
-2025/06/13-00:45:02.525 4980 Delete type=2 #222
-2025/06/13-00:45:02.525 4980 Delete type=2 #223
-2025/06/13-00:45:02.525 4980 Delete type=2 #226
+2025/06/13-01:51:19.693 13b8 Reusing MANIFEST C:\Users\ronet\Documents\assistente-contrucao\.wwebjs_auth\session-dremassist\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/06/13-01:51:19.693 13b8 Recovering log #345
+2025/06/13-01:51:19.731 13b8 Reusing old log C:\Users\ronet\Documents\assistente-contrucao\.wwebjs_auth\session-dremassist\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000345.log 
+2025/06/13-01:51:21.135 4ddc Manual compaction at level-0 from '\x00_\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00`\x00\x00\x00' @ 0 : 0; will stop at (end)

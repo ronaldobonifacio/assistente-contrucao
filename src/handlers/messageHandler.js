@@ -3,6 +3,7 @@
 const { db } = require('../config/firebase');
 const { salvarCompraFirebase, adicionarAnexoCompraExistente, editarCompraFirebase, removerAnexoCompra } = require('../services/firebaseService');
 const { transcreverAudioComGemini, extractPurchaseDetails, getConversationalResponse } = require('../services/geminiService');
+const { processNaturalLanguageQuery } = require('../services/geminiQueryService'); // <-- NOVO SERVIÇO
 const { uploadMediaToCloudinary } = require('../services/cloudinaryService');
 const { exportarComprasParaPlanilha, salvarAnexoLocalmente } = require('../services/fileService');
 const { log } = require('../utils/logger');
@@ -74,25 +75,6 @@ function formatPurchaseComparison(original, final, title) {
     return comparisonText;
 }
 
-async function handleFinancialQuery(phone, msgBody) {
-    const match = msgBody.match(/quanto gastei com|total de/i);
-    if (!match) return null;
-    const material = msgBody.substring(match.index + match[0].length).trim().replace('?', '');
-    if (!material) return null;
-    let totalGasto = 0;
-    const snapshot = await db.collectionGroup('comprasConfirmadas').where('grupoId', '==', GRUPO_ID).get();
-    if (snapshot.empty) return `Não encontrei nenhum gasto registrado para *${material}* no grupo.`;
-    
-    snapshot.docs.forEach(doc => {
-        const compra = doc.data();
-        if (compra.material && compra.material.toLowerCase().includes(material.toLowerCase())) {
-            totalGasto += compra.valor_total || 0;
-        }
-    });
-
-    if (totalGasto > 0) return `O gasto total do grupo com *${material}* foi de *R$ ${totalGasto.toFixed(2)}*.`;
-    else return `Não encontrei nenhum gasto registrado para *${material}* no grupo.`;
-}
 
 async function handleMessage(msg) {
     const phone = msg.from;
@@ -154,7 +136,6 @@ async function handleMessage(msg) {
                     `  *Material:* ${compra.material || 'N/A'}\n` +
                     (compra.data ? `  *Data:* ${compra.data}\n` : '') +
                     (compra.valor_total ? `  *V. Total:* R$ ${compra.valor_total.toFixed(2)}\n` : '') +
-                    // ALTERAÇÃO: Contagem de anexos adicionada aqui
                     `  *Anexos:* ${compra.anexos ? compra.anexos.length : 0}\n`;
                 if (scope === 'group') {
                     resposta += `  *Comprador:* ${compra.userName || 'Anônimo'}\n`;
@@ -177,7 +158,8 @@ async function handleMessage(msg) {
             '*B* - Anexar novo documento\n' +
             '*C* - Editar uma compra\n' +
             '*D* - Remover anexo de uma compra\n\n' +
-            '_(Responda com a letra ou digite "cancelar")_';
+            // MUDANÇA: Adicionando um lembrete para a consulta em linguagem natural
+            'Você também pode fazer uma pergunta como *"quanto gastei com cimento?"*';
 
         await msg.reply(finalMessage);
         userStates[phone] = 'awaiting_list_action';
@@ -211,9 +193,18 @@ async function handleMessage(msg) {
         return;
     }
 
+    // Se o usuário já estiver em uma conversa, continue a conversa
     if (userStates[phone] === 'free_chat') {
-        log('FREE-CHAT', `Mensagem recebida: "${msgBody}"`, phone);
         await chat.sendStateTyping();
+        // MUDANÇA: Usa o novo serviço de consulta inteligente no meio da conversa
+        const smartResponse = await processNaturalLanguageQuery(msgBody);
+        if (smartResponse) {
+            await msg.reply(smartResponse);
+            // Mantém o estado de free_chat para continuar a conversa
+            return;
+        }
+
+        // Se não for uma consulta, continua com a conversa normal
         const history = userSessionData[phone]?.chatHistory || [];
         const geminiResponse = await getConversationalResponse(history, msgBody);
         await msg.reply(geminiResponse);
@@ -423,6 +414,16 @@ async function handleMessage(msg) {
 
     if (userStates[phone] === 'awaiting_list_action') {
         const action = msgBody.toLowerCase();
+        
+        // MUDANÇA: Ações de lista agora também podem ser uma pergunta em linguagem natural
+        const smartResponse = await processNaturalLanguageQuery(msgBody);
+        if (smartResponse) {
+            await msg.reply(smartResponse);
+            // Mantém o usuário no mesmo estado para que ele possa continuar interagindo com a lista
+            await msg.reply('Você pode fazer outra pergunta ou escolher uma das opções (A, B, C, D, mais).');
+            return;
+        }
+
         if (action === 'mais') {
             const scope = userSessionData[phone]?.activeListScope || 'group';
             await listPurchases(scope, true);
@@ -440,7 +441,7 @@ async function handleMessage(msg) {
             userStates[phone] = 'awaiting_purchase_number';
             await msg.reply(messagesMap[action]);
         } else {
-            await msg.reply('Opção inválida. Responda com a letra da opção, "mais" ou "cancelar".');
+            await msg.reply('Opção inválida. Responda com a letra da opção, "mais" ou faça uma pergunta.');
         }
         return;
     }
@@ -571,15 +572,17 @@ async function handleMessage(msg) {
             break;
         default:
              if (!userStates[phone]) {
-                const financialResponse = await handleFinancialQuery(phone, msgBody);
-                if (financialResponse) {
-                    await msg.reply(financialResponse);
+                await chat.sendStateTyping();
+                const smartResponse = await processNaturalLanguageQuery(msgBody);
+                if (smartResponse) {
+                    await msg.reply(smartResponse);
                     return;
                 }
+                
                 log('FALLBACK', `Nenhum comando reconhecido. Iniciando modo de conversa livre para: ${phone}`);
                 userStates[phone] = 'free_chat';
                 userSessionData[phone] = { chatHistory: [] };
-                await chat.sendStateTyping();
+                
                 const initialResponse = await getConversationalResponse([], msgBody);
                 userSessionData[phone].chatHistory.push({ role: 'user', parts: [{ text: msgBody }] });
                 userSessionData[phone].chatHistory.push({ role: 'model', parts: [{ text: initialResponse }] });
