@@ -20,7 +20,7 @@ client.on('auth_failure', () => log('WHATSAPP', 'Falha na autenticação.'));
 client.on('disconnected', (reason) => log('WHATSAPP', `Cliente desconectado: ${reason}`));
 
 // Delega o processamento de todas as mensagens para o handler
-client.on('message', handleMessage);
+client.on('message', (msg) => handleMessage(client, msg));
 
 // Inicializa o bot
 client.initialize();

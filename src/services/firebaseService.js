@@ -10,7 +10,7 @@ const fs = require('fs');
 const GRUPO_ID = process.env.FIREBASE_GRUPO_ID || 'grupo1';
 
 async function salvarCompraFirebase(client, phone, compraData, userName, grupoId) {
-    const userId = phone.replace('@c.us', '');
+    const userId = String(phone).replace('@c.us', '');
     const timestamp = new Date();
     try {
         log('FIREBASE_SAVE', `Iniciando salvamento para ${userId}`, phone);

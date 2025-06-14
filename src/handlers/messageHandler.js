@@ -64,7 +64,7 @@ function formatPurchaseComparison(original, final, title) {
         } else if (finalValue) {
             let displayValue = finalValue;
             if (field === 'valor_unitario' || field === 'valor_total') {
-                 displayValue = `R$ ${finalValue.toFixed(2)}`;
+                displayValue = `R$ ${finalValue.toFixed(2)}`;
             }
             comparisonText += `${fieldLabels[field]} ${displayValue}\n`;
         }
@@ -76,7 +76,7 @@ function formatPurchaseComparison(original, final, title) {
 }
 
 
-async function handleMessage(msg) {
+async function handleMessage(client, msg) {
     const phone = msg.from;
     const chat = await msg.getChat();
     const contact = await msg.getContact();
@@ -87,7 +87,7 @@ async function handleMessage(msg) {
         await chat.sendStateTyping();
         let query;
         const sessionKey = `${scope}Session`;
-        
+
         if (!userSessionData[phone]) userSessionData[phone] = {};
         if (!userSessionData[phone][sessionKey] || !nextPage) {
             userSessionData[phone][sessionKey] = { page: 1, compras: [], lastVisible: null };
@@ -114,9 +114,9 @@ async function handleMessage(msg) {
             cleanup(phone);
             return;
         }
-        
+
         const novasCompras = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
+
         if (snapshot.empty && session.page > 1) {
             await msg.reply('Não há mais compras para mostrar.');
         } else {
@@ -230,7 +230,7 @@ async function handleMessage(msg) {
         userPurchaseData[phone] = dadosFinais;
         userStates[phone] = 'awaiting_confirmation';
         const confirmationText = formatPurchaseComparison(compraOriginal, dadosFinais, '🔍 *CONFIRA OS DADOS CORRIGIDOS:*') +
-                                 `\nAgora os dados estão *corretos*? (*sim* / *não*)`;
+            `\nAgora os dados estão *corretos*? (*sim* / *não*)`;
         await msg.reply(confirmationText);
         return;
     }
@@ -239,7 +239,7 @@ async function handleMessage(msg) {
         const scope = userSessionData[phone]?.activeListScope || 'group';
         const sessionKey = `${scope}Session`;
         const compra = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
-        if(!compra) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
+        if (!compra) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
 
         const index = parseInt(msgBody, 10) - 1;
 
@@ -267,7 +267,7 @@ async function handleMessage(msg) {
                 const scope = userSessionData[phone]?.activeListScope || 'group';
                 const sessionKey = `${scope}Session`;
                 const compra = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
-                if(!compra) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
+                if (!compra) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
 
                 await adicionarAnexoCompraExistente(compra.userId, compra.id, anexoUrl);
                 await msg.reply('✅ Anexo salvo com sucesso! Deseja adicionar mais algum arquivo? (responda *sim* ou *não*)');
@@ -290,7 +290,7 @@ async function handleMessage(msg) {
         const sessionKey = `${scope}Session`;
         const compras = userSessionData[phone]?.[sessionKey]?.compras || [];
         const index = parseInt(msgBody, 10) - 1;
-        
+
         if (isNaN(index) || index < 0 || index >= compras.length) {
             await msg.reply('❌ Número inválido. Por favor, digite um número da lista.');
             return;
@@ -312,7 +312,7 @@ async function handleMessage(msg) {
             }
             cleanup(phone);
         } else if (action === 'add_attachments') {
-            if (compraSelecionada.userId !== phone.replace('@c.us','')) {
+            if (compraSelecionada.userId !== phone.replace('@c.us', '')) {
                 await msg.reply('❌ Você só pode adicionar anexos às compras que você mesmo registrou.');
                 cleanup(phone);
                 return;
@@ -320,7 +320,7 @@ async function handleMessage(msg) {
             userStates[phone] = 'awaiting_attachment_to_existing';
             await msg.reply(`Ok. Por favor, envie o primeiro anexo para a compra de *${compraSelecionada.material}*.`);
         } else if (action === 'edit_purchase') {
-            if (compraSelecionada.userId !== phone.replace('@c.us','')) {
+            if (compraSelecionada.userId !== phone.replace('@c.us', '')) {
                 await msg.reply('❌ Você só pode editar as compras que você mesmo registrou.');
                 cleanup(phone);
                 return;
@@ -331,7 +331,7 @@ async function handleMessage(msg) {
             await delay(1000);
             await msg.reply('Por favor, envie uma mensagem de texto ou um áudio descrevendo *como a compra deve ficar*.');
         } else if (action === 'delete_attachment') {
-            if (compraSelecionada.userId !== phone.replace('@c.us','')) {
+            if (compraSelecionada.userId !== phone.replace('@c.us', '')) {
                 await msg.reply('❌ Você só pode remover anexos das compras que você mesmo registrou.');
                 cleanup(phone);
                 return;
@@ -370,7 +370,7 @@ async function handleMessage(msg) {
         const scope = userSessionData[phone]?.activeListScope || 'group';
         const sessionKey = `${scope}Session`;
         const compraOriginal = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
-        if(!compraOriginal) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
+        if (!compraOriginal) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
 
         const dadosParaAtualizar = Object.keys(novosDadosParciais).reduce((acc, key) => {
             if (novosDadosParciais[key]) acc[key] = novosDadosParciais[key];
@@ -388,14 +388,14 @@ async function handleMessage(msg) {
         userStates[phone] = 'awaiting_edit_confirmation';
         return;
     }
-    
+
     if (userStates[phone] === 'awaiting_edit_confirmation') {
         if (msgBody.toLowerCase() === 'sim' || msgBody.toLowerCase() === 's') {
             await msg.reply('✅ Confirmado! Salvando as alterações...');
             const scope = userSessionData[phone]?.activeListScope || 'group';
             const sessionKey = `${scope}Session`;
             const compraParaInteragir = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
-            if(!compraParaInteragir) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
+            if (!compraParaInteragir) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
 
             const compraId = compraParaInteragir.id;
             const userId = compraParaInteragir.userId;
@@ -414,7 +414,7 @@ async function handleMessage(msg) {
 
     if (userStates[phone] === 'awaiting_list_action') {
         const action = msgBody.toLowerCase();
-        
+
         // MUDANÇA: Ações de lista agora também podem ser uma pergunta em linguagem natural
         const smartResponse = await processNaturalLanguageQuery(msgBody);
         if (smartResponse) {
@@ -451,8 +451,8 @@ async function handleMessage(msg) {
             const media = await msg.downloadMedia();
             const localPath = await salvarAnexoLocalmente(media, phone);
             if (localPath) {
-                if(!userPurchaseData[phone]) userPurchaseData[phone] = {};
-                if(!userPurchaseData[phone].anexos) userPurchaseData[phone].anexos = [];
+                if (!userPurchaseData[phone]) userPurchaseData[phone] = {};
+                if (!userPurchaseData[phone].anexos) userPurchaseData[phone].anexos = [];
                 userPurchaseData[phone].anexos.push(localPath);
                 await msg.reply('✅ Anexo salvo temporariamente! Deseja adicionar mais algum? (*sim* / *não*)');
             } else {
@@ -477,8 +477,8 @@ async function handleMessage(msg) {
             userStates[phone] = 'awaiting_confirmation';
             const finalData = userPurchaseData[phone];
             const confirmationText = formatPurchaseDetails(finalData, '🔍 *CONFIRA OS DADOS FINAIS:*') +
-                                     `📎 *Anexos:* ${finalData.anexos.length} arquivo(s) pronto(s) para upload.\n\n` +
-                                     'Os dados estão *corretos*? Responda com *sim* para salvar tudo, ou *não* para corrigir algo.';
+                `📎 *Anexos:* ${finalData.anexos.length} arquivo(s) pronto(s) para upload.\n\n` +
+                'Os dados estão *corretos*? Responda com *sim* para salvar tudo, ou *não* para corrigir algo.';
             await msg.reply(confirmationText);
         } else {
             await msg.reply('Resposta inválida. Por favor, envie outro anexo ou responda com *sim* ou *não*.');
@@ -490,7 +490,7 @@ async function handleMessage(msg) {
         if (msgBody.toLowerCase() === 'sim' || msgBody.toLowerCase() === 's') {
             await msg.reply('✅ Confirmado! Salvando sua compra e fazendo upload dos anexos...');
             const compraData = userPurchaseData[phone];
-            const salvou = await salvarCompraFirebase(phone, compraData, name, GRUPO_ID);
+            const salvou = await salvarCompraFirebase(client, phone, compraData, name, GRUPO_ID); // <-- LINHA CORRIGIDA
             await msg.reply(salvou ? '✨ *Compra registrada com sucesso no sistema!*' : '❌ Falha ao salvar a compra. Tente novamente.');
             cleanup(phone);
         } else if (msgBody.toLowerCase() === 'não' || msgBody.toLowerCase() === 'nao') {
@@ -543,7 +543,7 @@ async function handleMessage(msg) {
     }
 
     const lowerCaseMsgBody = msgBody.toLowerCase();
-    
+
     if (lowerCaseMsgBody === 'listar minhas') {
         cleanup(phone);
         await listPurchases('user');
@@ -571,23 +571,26 @@ async function handleMessage(msg) {
             await exportarComprasParaPlanilha(msg);
             break;
         default:
-             if (!userStates[phone]) {
+            if (!userStates[phone]) {
                 await chat.sendStateTyping();
                 const smartResponse = await processNaturalLanguageQuery(msgBody);
                 if (smartResponse) {
                     await msg.reply(smartResponse);
                     return;
                 }
-                
+                // CORREÇÃO 1: O nome da variável aqui deve ser 'userSessionData'.
+                userSessionData[phone] = { chatHistory: [] };
+
+                const initialResponse = await getConversationalResponse([], msgBody);
+
                 log('FALLBACK', `Nenhum comando reconhecido. Iniciando modo de conversa livre para: ${phone}`);
                 userStates[phone] = 'free_chat';
-                userSessionData[phone] = { chatHistory: [] };
-                
-                const initialResponse = await getConversationalResponse([], msgBody);
+
+                // CORREÇÃO 2: Removido o "user" extra que causava o erro de sintaxe.
                 userSessionData[phone].chatHistory.push({ role: 'user', parts: [{ text: msgBody }] });
                 userSessionData[phone].chatHistory.push({ role: 'model', parts: [{ text: initialResponse }] });
                 await msg.reply(initialResponse);
-             }
+            }
             break;
     }
 }
