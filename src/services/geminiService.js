@@ -1,4 +1,4 @@
-const { geminiTextModel,genAI } = require('../config/gemini');
+const { geminiTextModel, genAI } = require('../config/gemini');
 const { log } = require('../utils/logger');
 
 async function transcreverAudioComGemini(media) {
@@ -10,7 +10,11 @@ async function transcreverAudioComGemini(media) {
 
 async function extractPurchaseDetails(userMessage, phone) {
     try {
-        const prompt = `Extraia dados de compra de materiais de construção da mensagem: "${userMessage}". O campo "material" é obrigatório. Calcule o valor_total se possível. Retorne APENAS um objeto JSON válido, sem markdown. Formato: {"material":"","quantidade":,"valor_total":,"valor_unitario":,"local":"","categoria":"","data":"${new Date().toLocaleDateString('pt-BR')}"}`;
+        const prompt = `Extraia dados de compra da mensagem: "${userMessage}". O campo "material" é obrigatório.
+                        - Se a quantidade e o valor_unitario forem fornecidos, calcule o valor_total.
+                        - Se o valor_total e a quantidade forem fornecidos, calcule o valor_unitario.
+                        - Retorne APENAS um objeto JSON válido, sem markdown.
+                        - Use este formato: {"material":"","quantidade":,"valor_total":,"valor_unitario":,"local":"","categoria":"","data":"${new Date().toLocaleDateString('pt-BR')}"}`;
         const result = await geminiTextModel.generateContent(prompt);
         const jsonText = result.response.text().replace(/```json|```/g, '').trim();
         log('GEMINI-EXTRACT', `Dados extraídos: ${jsonText}`, phone);

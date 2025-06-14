@@ -1,4 +1,4 @@
-// ARQUIVO FINAL CORRIGIDO: src/handlers/messageHandler.js
+// ARQUIVO COMPLETO, FINAL E CORRIGIDO: src/handlers/messageHandler.js
 
 const { db } = require('../config/firebase');
 const { salvarCompraFirebase, adicionarAnexoCompraExistente, editarCompraFirebase, removerAnexoCompra } = require('../services/firebaseService');
@@ -19,8 +19,6 @@ const userSessionData = {};
 const GRUPO_ID = process.env.FIREBASE_GRUPO_ID || 'grupo1';
 const PAGE_SIZE = 5;
 
-// ** FUNÇÃO MOVIDA PARA O ESCOPO DO MÓDULO **
-// Isso corrige o erro `ReferenceError: cleanup is not defined`
 const cleanup = (p) => {
     const purchase = userPurchaseData[p];
     if (purchase && purchase.anexos) {
@@ -36,7 +34,6 @@ const cleanup = (p) => {
     delete userSessionData[p];
 };
 
-
 async function sendMainMenu(msg, name) {
     const menuText = `👷‍♂️ Olá *${name.split(" ")[0]}*! Sou seu assistente de compras para a obra.\n\n` +
         '*Como posso te ajudar hoje?*\n\n' +
@@ -51,8 +48,8 @@ function formatPurchaseDetails(compra, title) {
     let detailsText = `${title}\n\n` +
         `🏗️ *Material:* ${compra.material || 'N/A'}\n` +
         (compra.quantidade ? `🧮 *Quantidade:* ${compra.quantidade}\n` : '') +
-        (compra.valor_unitario ? `💲 *Valor unitário:* R$ ${compra.valor_unitario?.toFixed(2)}\n` : '') +
-        (compra.valor_total ? `💰 *Valor total:* R$ ${compra.valor_total?.toFixed(2)}\n` : '') +
+        (compra.valor_unitario ? `💲 *Valor unitário:* R$ ${Number(compra.valor_unitario).toFixed(2)}\n` : '') +
+        (compra.valor_total ? `💰 *Valor total:* R$ ${Number(compra.valor_total).toFixed(2)}\n` : '') +
         (compra.data ? `📅 *Data:* ${compra.data}\n` : '') +
         (compra.local ? `🏪 *Local:* ${compra.local}\n` : '');
     return detailsText;
@@ -72,17 +69,17 @@ function formatPurchaseComparison(original, final, title) {
     fields.forEach(field => {
         const originalValue = original[field];
         const finalValue = final[field];
-        if (originalValue !== finalValue && finalValue) {
+        if (originalValue !== finalValue && finalValue !== undefined && finalValue !== null) {
             let originalDisplay = originalValue || 'N/A';
             let finalValueDisplay = finalValue;
-            if (field === 'valor_unitario' || field === 'valor_total') {
-                originalDisplay = `R$ ${originalValue?.toFixed(2) || '0.00'}`;
-                finalValueDisplay = `R$ ${finalValue?.toFixed(2)}`;
+            if (typeof finalValue === 'number' && (field === 'valor_unitario' || field === 'valor_total')) {
+                originalDisplay = `R$ ${Number(originalValue || 0).toFixed(2)}`;
+                finalValueDisplay = `R$ ${Number(finalValue).toFixed(2)}`;
             }
             comparisonText += `${fieldLabels[field]} ~${originalDisplay}~  ➡️  *${finalValueDisplay}*\n`;
         } else if (finalValue) {
             let displayValue = finalValue;
-            if (field === 'valor_unitario' || field === 'valor_total') {
+            if (typeof finalValue === 'number' && (field === 'valor_unitario' || field === 'valor_total')) {
                 displayValue = `R$ ${finalValue.toFixed(2)}`;
             }
             comparisonText += `${fieldLabels[field]} ${displayValue}\n`;
@@ -105,14 +102,16 @@ async function handleMessage(client, msg) {
     const listPurchases = async (scope = 'group', nextPage = false) => {
         await chat.sendStateTyping();
         let query;
-        const sessionKey = `${scope}Session`;
 
-        if (!userSessionData[phone]) userSessionData[phone] = {};
-        if (!userSessionData[phone][sessionKey] || !nextPage) {
-            userSessionData[phone][sessionKey] = { page: 1, compras: [], lastVisible: null };
+        if (!userSessionData[phone] || !nextPage) {
+            userSessionData[phone] = {
+                page: 1,
+                compras: [],
+                lastVisible: null,
+                scope: scope
+            };
         }
-        userSessionData[phone].activeListScope = scope;
-        const session = userSessionData[phone][sessionKey];
+        const session = userSessionData[phone];
 
         if (scope === 'user') {
             const userId = phone.replace('@c.us', '');
@@ -181,7 +180,6 @@ async function handleMessage(client, msg) {
 
         await msg.reply(finalMessage);
         userStates[phone] = 'awaiting_list_action';
-        userSessionData[phone][sessionKey] = session;
     };
 
     if (!phone.endsWith('@c.us') || chat.isGroup) return;
@@ -209,6 +207,7 @@ async function handleMessage(client, msg) {
         await msg.reply(geminiResponse);
         history.push({ role: 'user', parts: [{ text: msgBody }] });
         history.push({ role: 'model', parts: [{ text: geminiResponse }] });
+        if (!userSessionData[phone]) userSessionData[phone] = {};
         userSessionData[phone].chatHistory = history.slice(-8);
         return;
     }
@@ -235,10 +234,12 @@ async function handleMessage(client, msg) {
     }
 
     if (userStates[phone] === 'awaiting_attachment_to_delete') {
-        const scope = userSessionData[phone]?.activeListScope || 'group';
-        const sessionKey = `${scope}Session`;
-        const compra = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
-        if (!compra) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
+        const compra = userSessionData[phone]?.compraParaInteragir;
+        if (!compra) {
+            await msg.reply('Sessão expirada. Tente listar novamente.');
+            cleanup(phone);
+            return;
+        }
 
         const index = parseInt(msgBody, 10) - 1;
 
@@ -263,10 +264,12 @@ async function handleMessage(client, msg) {
             const media = await msg.downloadMedia();
             const anexoUrl = await uploadMediaToCloudinary(media, phone);
             if (anexoUrl) {
-                const scope = userSessionData[phone]?.activeListScope || 'group';
-                const sessionKey = `${scope}Session`;
-                const compra = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
-                if (!compra) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
+                const compra = userSessionData[phone]?.compraParaInteragir;
+                if (!compra) {
+                    await msg.reply('Sessão expirada. Tente listar novamente.');
+                    cleanup(phone);
+                    return;
+                }
 
                 await adicionarAnexoCompraExistente(compra.userId, compra.id, anexoUrl);
                 await msg.reply('✅ Anexo salvo com sucesso! Deseja adicionar mais algum arquivo? (responda *sim* ou *não*)');
@@ -284,10 +287,42 @@ async function handleMessage(client, msg) {
         return;
     }
 
+    if (userStates[phone] === 'awaiting_list_action') {
+        const action = msgBody.toLowerCase();
+
+        if (action === 'mais') {
+            const scope = userSessionData[phone]?.scope || 'group';
+            await listPurchases(scope, true);
+            return;
+        }
+
+        if (['a', 'b', 'c', 'd'].includes(action)) {
+            const actionsMap = { a: 'view_attachments', b: 'add_attachments', c: 'edit_purchase', d: 'delete_attachment' };
+            const messagesMap = {
+                a: 'Qual o *número* da compra cujos anexos você quer ver?',
+                b: 'Qual o *número* da compra para adicionar novos anexos?',
+                c: 'Qual o *número* da compra que você deseja *editar*?',
+                d: 'De qual *número* de compra você quer remover um anexo?'
+            };
+            userSessionData[phone].action = actionsMap[action];
+            userStates[phone] = 'awaiting_purchase_number';
+            await msg.reply(messagesMap[action]);
+            return;
+        }
+
+        const smartResponse = await processNaturalLanguageQuery(msgBody);
+        if (smartResponse) {
+            await msg.reply(smartResponse);
+            await msg.reply('Você pode fazer outra pergunta ou escolher uma das opções (A, B, C, D, mais).');
+            return;
+        }
+
+        await msg.reply('Opção inválida. Responda com a letra da opção, "mais" ou faça uma pergunta.');
+        return;
+    }
+
     if (userStates[phone] === 'awaiting_purchase_number') {
-        const scope = userSessionData[phone]?.activeListScope || 'group';
-        const sessionKey = `${scope}Session`;
-        const compras = userSessionData[phone]?.[sessionKey]?.compras || [];
+        const compras = userSessionData[phone]?.compras || [];
         const index = parseInt(msgBody, 10) - 1;
 
         if (isNaN(index) || index < 0 || index >= compras.length) {
@@ -295,7 +330,7 @@ async function handleMessage(client, msg) {
             return;
         }
         const compraSelecionada = compras[index];
-        userSessionData[phone][sessionKey].compraParaInteragir = compraSelecionada;
+        userSessionData[phone].compraParaInteragir = compraSelecionada;
         const action = userSessionData[phone].action;
 
         if (action === 'view_attachments') {
@@ -327,7 +362,7 @@ async function handleMessage(client, msg) {
             userStates[phone] = 'awaiting_purchase_edit_description';
             const originalDetails = formatPurchaseDetails(compraSelecionada, '📝 *ESTES SÃO OS DADOS ATUAIS DA COMPRA:*');
             await msg.reply(originalDetails);
-            await delay(1000);
+            await delay(500);
             await msg.reply('Por favor, envie uma mensagem de texto ou um áudio descrevendo *como a compra deve ficar*.');
         } else if (action === 'delete_attachment') {
             if (compraSelecionada.userId !== phone.replace('@c.us', '')) {
@@ -360,85 +395,88 @@ async function handleMessage(client, msg) {
         } else {
             textoEdicao = msg.body.trim();
         }
+
         if (!textoEdicao) {
-            await msg.reply('❌ Não consegui entender a descrição.');
+            await msg.reply('❌ Não consegui entender a descrição. Por favor, tente novamente ou digite *cancelar*.');
             return;
         }
+
         await msg.reply('Analisando as alterações...');
         const novosDadosParciais = await extractPurchaseDetails(textoEdicao, phone);
-        const scope = userSessionData[phone]?.activeListScope || 'group';
-        const sessionKey = `${scope}Session`;
-        const compraOriginal = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
-        if (!compraOriginal) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
+        const compraOriginal = userSessionData[phone]?.compraParaInteragir;
+        if (!compraOriginal) {
+            await msg.reply('Sessão expirada. Tente listar novamente.');
+            cleanup(phone);
+            return;
+        }
 
         const dadosParaAtualizar = (novosDadosParciais ? Object.keys(novosDadosParciais) : []).reduce((acc, key) => {
-            if (novosDadosParciais[key]) acc[key] = novosDadosParciais[key];
+            if (novosDadosParciais[key] !== null && novosDadosParciais[key] !== undefined) {
+                acc[key] = novosDadosParciais[key];
+            }
             return acc;
         }, {});
+
         if (Object.keys(dadosParaAtualizar).length === 0) {
             await msg.reply('❌ Não identifiquei nenhuma informação para alterar. Tente novamente.');
             return;
         }
-        const dadosFinais = { ...compraOriginal, ...dadosParaAtualizar };
-        userSessionData[phone][sessionKey].dadosEditados = dadosFinais;
+
+        let dadosFinais = { ...compraOriginal, ...dadosParaAtualizar };
+
+        const mudouValorTotal = 'valor_total' in dadosParaAtualizar;
+        const mudouQuantidade = 'quantidade' in dadosParaAtualizar;
+        const mudouValorUnitario = 'valor_unitario' in dadosParaAtualizar;
+
+        const quantidade = dadosFinais.quantidade ? Number(dadosFinais.quantidade) : 0;
+        const valorUnitario = dadosFinais.valor_unitario ? Number(dadosFinais.valor_unitario) : 0;
+        const valorTotal = dadosFinais.valor_total ? Number(dadosFinais.valor_total) : 0;
+
+        if (mudouValorTotal && !mudouValorUnitario && quantidade > 0) {
+            dadosFinais.valor_unitario = valorTotal / quantidade;
+        } else if ((mudouQuantidade || mudouValorUnitario) && !mudouValorTotal) {
+            if (quantidade > 0 && valorUnitario > 0) {
+                dadosFinais.valor_total = quantidade * valorUnitario;
+            }
+        }
+        
+        userSessionData[phone].dadosEditados = dadosFinais;
+
         const previewText = formatPurchaseComparison(compraOriginal, dadosFinais, '*PREVIEW DA EDIÇÃO*') +
             '\nAs alterações estão *corretas*? Responda com *sim* para confirmar.';
         await msg.reply(previewText);
         userStates[phone] = 'awaiting_edit_confirmation';
         return;
     }
-
+    
     if (userStates[phone] === 'awaiting_edit_confirmation') {
         if (msgBody.toLowerCase() === 'sim' || msgBody.toLowerCase() === 's') {
             await msg.reply('✅ Confirmado! Salvando as alterações...');
-            const scope = userSessionData[phone]?.activeListScope || 'group';
-            const sessionKey = `${scope}Session`;
-            const compraParaInteragir = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
-            if (!compraParaInteragir) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
+            
+            const compraParaInteragir = userSessionData[phone]?.compraParaInteragir;
+            const novosDados = userSessionData[phone]?.dadosEditados;
 
+            if (!compraParaInteragir || !novosDados) {
+                await msg.reply('❌ Ocorreu um erro e os dados da edição foram perdidos. Por favor, tente novamente.');
+                cleanup(phone);
+                return;
+            }
+            
             const compraId = compraParaInteragir.id;
             const userId = compraParaInteragir.userId;
-            const novosDados = userSessionData[phone][sessionKey].dadosEditados;
+
             delete novosDados.id;
 
             const sucesso = await editarCompraFirebase(userId, compraId, novosDados);
-            if (sucesso) await msg.reply('✨ *Compra atualizada com sucesso no sistema!*');
-            else await msg.reply('❌ Falha ao atualizar a compra.');
+            if (sucesso) {
+                await msg.reply('✨ *Compra atualizada com sucesso no sistema!*');
+            } else {
+                await msg.reply('❌ Falha ao atualizar a compra no banco de dados.');
+            }
+            cleanup(phone);
         } else {
             await msg.reply('Ok, edição descartada.');
-        }
-        cleanup(phone);
-        return;
-    }
-
-    if (userStates[phone] === 'awaiting_list_action') {
-        const action = msgBody.toLowerCase();
-
-        const smartResponse = await processNaturalLanguageQuery(msgBody);
-        if (smartResponse) {
-            await msg.reply(smartResponse);
-            await msg.reply('Você pode fazer outra pergunta ou escolher uma das opções (A, B, C, D, mais).');
-            return;
-        }
-
-        if (action === 'mais') {
-            const scope = userSessionData[phone]?.activeListScope || 'group';
-            await listPurchases(scope, true);
-            return;
-        }
-        if (['a', 'b', 'c', 'd'].includes(action)) {
-            const actionsMap = { a: 'view_attachments', b: 'add_attachments', c: 'edit_purchase', d: 'delete_attachment' };
-            const messagesMap = {
-                a: 'Qual o *número* da compra cujos anexos você quer ver?',
-                b: 'Qual o *número* da compra para adicionar novos anexos?',
-                c: 'Qual o *número* da compra que você deseja *editar*?',
-                d: 'De qual *número* de compra você quer remover um anexo?'
-            };
-            userSessionData[phone].action = actionsMap[action];
-            userStates[phone] = 'awaiting_purchase_number';
-            await msg.reply(messagesMap[action]);
-        } else {
-            await msg.reply('Opção inválida. Responda com a letra da opção, "mais" ou faça uma pergunta.');
+            cleanup(phone);
         }
         return;
     }
@@ -599,5 +637,5 @@ if (process.env.NODE_ENV === 'test') {
     module.exports.userStates = userStates;
     module.exports.userPurchaseData = userPurchaseData;
     module.exports.userSessionData = userSessionData;
-    module.exports.cleanup = cleanup; // Exporta a função de limpeza para ser usada nos testes
+    module.exports.cleanup = cleanup;
 }

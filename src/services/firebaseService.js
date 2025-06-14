@@ -122,4 +122,21 @@ async function verificarEAlertarOrcamento(client, phone, category) {
     }
 }
 
-module.exports = { salvarCompraFirebase, adicionarAnexoCompraExistente, editarCompraFirebase, excluirCompraFirebase, setBudget, getBudgetAndSpending };
+async function removerAnexoCompra(userId, compraId, anexoUrl) {
+    try {
+        log('FIREBASE_DELETE_ANEXO', `Removendo anexo de ${compraId} para user ${userId}`);
+        const compraRef = db.collection('grupos').doc(GRUPO_ID).collection('compras').doc(userId).collection('comprasConfirmadas').doc(compraId);
+        
+        await compraRef.update({
+            anexos: FieldValue.arrayRemove(anexoUrl)
+        });
+        
+        log('FIREBASE_DELETE_ANEXO_SUCCESS', `Anexo removido com sucesso.`);
+        return true;
+    } catch (error) {
+        log('FIREBASE_DELETE_ANEXO_ERROR', `Erro ao remover anexo: ${error.message}`, userId);
+        return false;
+    }
+}
+
+module.exports = { salvarCompraFirebase, adicionarAnexoCompraExistente, editarCompraFirebase, excluirCompraFirebase, setBudget, getBudgetAndSpending, removerAnexoCompra };
