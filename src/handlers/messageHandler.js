@@ -1,9 +1,9 @@
-// INÍCIO DO ARQUIVO COMPLETO handleMessage.js
+// ARQUIVO FINAL CORRIGIDO: src/handlers/messageHandler.js
 
 const { db } = require('../config/firebase');
 const { salvarCompraFirebase, adicionarAnexoCompraExistente, editarCompraFirebase, removerAnexoCompra } = require('../services/firebaseService');
 const { transcreverAudioComGemini, extractPurchaseDetails, getConversationalResponse } = require('../services/geminiService');
-const { processNaturalLanguageQuery } = require('../services/geminiQueryService'); // <-- NOVO SERVIÇO
+const { processNaturalLanguageQuery } = require('../services/geminiQueryService');
 const { uploadMediaToCloudinary } = require('../services/cloudinaryService');
 const { exportarComprasParaPlanilha, salvarAnexoLocalmente } = require('../services/fileService');
 const { log } = require('../utils/logger');
@@ -11,12 +11,31 @@ const { delay } = require('../utils/helpers');
 const { MessageMedia } = require('whatsapp-web.js');
 const fs = require('fs');
 
+// Definição das variáveis de estado no escopo do módulo
 const userStates = {};
 const userPurchaseData = {};
 const userSessionData = {};
 
 const GRUPO_ID = process.env.FIREBASE_GRUPO_ID || 'grupo1';
 const PAGE_SIZE = 5;
+
+// ** FUNÇÃO MOVIDA PARA O ESCOPO DO MÓDULO **
+// Isso corrige o erro `ReferenceError: cleanup is not defined`
+const cleanup = (p) => {
+    const purchase = userPurchaseData[p];
+    if (purchase && purchase.anexos) {
+        purchase.anexos.forEach(localPath => {
+            if (fs.existsSync(localPath)) {
+                fs.unlinkSync(localPath);
+                log('CLEANUP', `Arquivo temporário deletado: ${localPath}`, p);
+            }
+        });
+    }
+    delete userStates[p];
+    delete userPurchaseData[p];
+    delete userSessionData[p];
+};
+
 
 async function sendMainMenu(msg, name) {
     const menuText = `👷‍♂️ Olá *${name.split(" ")[0]}*! Sou seu assistente de compras para a obra.\n\n` +
@@ -158,7 +177,6 @@ async function handleMessage(client, msg) {
             '*B* - Anexar novo documento\n' +
             '*C* - Editar uma compra\n' +
             '*D* - Remover anexo de uma compra\n\n' +
-            // MUDANÇA: Adicionando um lembrete para a consulta em linguagem natural
             'Você também pode fazer uma pergunta como *"quanto gastei com cimento?"*';
 
         await msg.reply(finalMessage);
@@ -167,21 +185,6 @@ async function handleMessage(client, msg) {
     };
 
     if (!phone.endsWith('@c.us') || chat.isGroup) return;
-
-    const cleanup = (p) => {
-        const purchase = userPurchaseData[p];
-        if (purchase && purchase.anexos) {
-            purchase.anexos.forEach(localPath => {
-                if (fs.existsSync(localPath)) {
-                    fs.unlinkSync(localPath);
-                    log('CLEANUP', `Arquivo temporário deletado: ${localPath}`, p);
-                }
-            });
-        }
-        delete userStates[p];
-        delete userPurchaseData[p];
-        delete userSessionData[p];
-    };
 
     const exitKeywords = /^(menu|sair|xau|adeus|voltar|cancelar|fim)$/i;
     if (exitKeywords.test(msgBody.toLowerCase())) {
@@ -193,18 +196,14 @@ async function handleMessage(client, msg) {
         return;
     }
 
-    // Se o usuário já estiver em uma conversa, continue a conversa
     if (userStates[phone] === 'free_chat') {
         await chat.sendStateTyping();
-        // MUDANÇA: Usa o novo serviço de consulta inteligente no meio da conversa
         const smartResponse = await processNaturalLanguageQuery(msgBody);
         if (smartResponse) {
             await msg.reply(smartResponse);
-            // Mantém o estado de free_chat para continuar a conversa
             return;
         }
 
-        // Se não for uma consulta, continua com a conversa normal
         const history = userSessionData[phone]?.chatHistory || [];
         const geminiResponse = await getConversationalResponse(history, msgBody);
         await msg.reply(geminiResponse);
@@ -372,7 +371,7 @@ async function handleMessage(client, msg) {
         const compraOriginal = userSessionData[phone]?.[sessionKey]?.compraParaInteragir;
         if (!compraOriginal) { await msg.reply('Sessão expirada. Tente listar novamente.'); cleanup(phone); return; }
 
-        const dadosParaAtualizar = Object.keys(novosDadosParciais).reduce((acc, key) => {
+        const dadosParaAtualizar = (novosDadosParciais ? Object.keys(novosDadosParciais) : []).reduce((acc, key) => {
             if (novosDadosParciais[key]) acc[key] = novosDadosParciais[key];
             return acc;
         }, {});
@@ -415,11 +414,9 @@ async function handleMessage(client, msg) {
     if (userStates[phone] === 'awaiting_list_action') {
         const action = msgBody.toLowerCase();
 
-        // MUDANÇA: Ações de lista agora também podem ser uma pergunta em linguagem natural
         const smartResponse = await processNaturalLanguageQuery(msgBody);
         if (smartResponse) {
             await msg.reply(smartResponse);
-            // Mantém o usuário no mesmo estado para que ele possa continuar interagindo com a lista
             await msg.reply('Você pode fazer outra pergunta ou escolher uma das opções (A, B, C, D, mais).');
             return;
         }
@@ -490,7 +487,7 @@ async function handleMessage(client, msg) {
         if (msgBody.toLowerCase() === 'sim' || msgBody.toLowerCase() === 's') {
             await msg.reply('✅ Confirmado! Salvando sua compra e fazendo upload dos anexos...');
             const compraData = userPurchaseData[phone];
-            const salvou = await salvarCompraFirebase(client, phone, compraData, name, GRUPO_ID); // <-- LINHA CORRIGIDA
+            const salvou = await salvarCompraFirebase(client, phone, compraData, name, GRUPO_ID);
             await msg.reply(salvou ? '✨ *Compra registrada com sucesso no sistema!*' : '❌ Falha ao salvar a compra. Tente novamente.');
             cleanup(phone);
         } else if (msgBody.toLowerCase() === 'não' || msgBody.toLowerCase() === 'nao') {
@@ -578,7 +575,7 @@ async function handleMessage(client, msg) {
                     await msg.reply(smartResponse);
                     return;
                 }
-                // CORREÇÃO 1: O nome da variável aqui deve ser 'userSessionData'.
+
                 userSessionData[phone] = { chatHistory: [] };
 
                 const initialResponse = await getConversationalResponse([], msgBody);
@@ -586,7 +583,6 @@ async function handleMessage(client, msg) {
                 log('FALLBACK', `Nenhum comando reconhecido. Iniciando modo de conversa livre para: ${phone}`);
                 userStates[phone] = 'free_chat';
 
-                // CORREÇÃO 2: Removido o "user" extra que causava o erro de sintaxe.
                 userSessionData[phone].chatHistory.push({ role: 'user', parts: [{ text: msgBody }] });
                 userSessionData[phone].chatHistory.push({ role: 'model', parts: [{ text: initialResponse }] });
                 await msg.reply(initialResponse);
@@ -595,6 +591,13 @@ async function handleMessage(client, msg) {
     }
 }
 
+
 module.exports = { handleMessage };
 
-// FIM DO ARQUIVO COMPLETO handleMessage.js
+// Bloco para permitir que o Jest acesse e limpe os estados durante os testes
+if (process.env.NODE_ENV === 'test') {
+    module.exports.userStates = userStates;
+    module.exports.userPurchaseData = userPurchaseData;
+    module.exports.userSessionData = userSessionData;
+    module.exports.cleanup = cleanup; // Exporta a função de limpeza para ser usada nos testes
+}

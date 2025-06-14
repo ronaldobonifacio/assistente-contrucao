@@ -1,4 +1,13 @@
 {
+  "name": "assistente-contrucao",
+  "version": "1.0.0",
+  "description": "Bot para WhatsApp",
+  "main": "app.js",
+  "scripts": {
+    "start": "nodemon app.js",
+    "dev": "nodemon app.js",
+    "test": "jest --coverage"
+  },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "axios": "^1.9.0",
@@ -10,5 +19,8 @@
     "qrcode-terminal": "^0.12.0",
     "whatsapp-web.js": "^1.30.0",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "jest": "^30.0.0"
   }
 }
