@@ -1,4 +1,0 @@
-2025/06/13-01:51:19.693 13b8 Reusing MANIFEST C:\Users\ronet\Documents\assistente-contrucao\.wwebjs_auth\session-dremassist\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
-2025/06/13-01:51:19.693 13b8 Recovering log #345
-2025/06/13-01:51:19.731 13b8 Reusing old log C:\Users\ronet\Documents\assistente-contrucao\.wwebjs_auth\session-dremassist\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000345.log 
-2025/06/13-01:51:21.135 4ddc Manual compaction at level-0 from '\x00_\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00`\x00\x00\x00' @ 0 : 0; will stop at (end)
